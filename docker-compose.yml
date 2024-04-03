@@ -1,8 +1,7 @@
-# alice(172.28.0.3) <-> (172.28.0.2)moon(172.30.0.2) <-> (172.30.0.4)sun(172.29.0.4) <-> (172.29.0.5)bob
+# alice(172.28.0.3) <-> (172.28.0.2)moon(172.30.0.2) -> internet
 version: "3.3"
 
 services:
-
   alice:
     container_name: alice
     image: ubuntu-with-tools
@@ -11,6 +10,8 @@ services:
       dockerfile: Dockerfile
     cap_add:
       - NET_ADMIN
+    volumes:
+      - cert-volume:/etc/ssl/certs #:ro # Mount as read-only
     hostname: alice
     networks:
       moon-internal:
@@ -20,27 +21,34 @@ services:
       ip route add default via 172.28.0.2 &&
       tail -f /dev/null"
 
-  moon:
+  moon: # http://localhost:8082/#/flows
     container_name: moon
-    image: ubuntu-with-tools
+    # image: mitmproxy/mitmproxy  # Using the official mitmproxy ima  ge
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.mitmproxy
+      args: # https://mitmproxy.org/downloads/#10.2.4/
+        - MITMPROXY_WHEEL=mitmproxy-10.2.4-py3-none-any.whl
     cap_add:
       - NET_ADMIN
     hostname: moon
+    volumes:
+      - cert-volume:/root/.mitmproxy
     networks:
       moon-internal:
         ipv4_address: 172.28.0.2
       internet:
         ipv4_address: 172.30.0.2
-    command: >-
-      sh -c "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE &&
-      iptables -t nat -A POSTROUTING -o eth1 -j MASQUERADE &&
-      iptables -A FORWARD -i eth1 -j ACCEPT &&
-      iptables -A FORWARD -i eth0 -j ACCEPT &&
-      ip route add 172.29.0.0/16 via 172.30.0.4 &&
-      tail -f /dev/null"
+    ports:
+      - "8080:8080"  # Expose the mitmproxy web interface port to the host
+      - "8081:8081" 
+    tty: true
+    stdin_open: true
+    # https://docs.mitmproxy.org/stable/concepts-modes/#upstream-proxy
+    command: mitmweb --web-host 0.0.0.0 --web-port 8081 --mode transparent --showhost --ssl-insecure
+    expose:
+        - "8080"
+        - "8081"
 
 networks:
   moon-internal:
@@ -53,3 +61,6 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/16
+
+volumes:
+  cert-volume:
